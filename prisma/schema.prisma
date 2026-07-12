@@ -1,0 +1,257 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Department {
+  id                  String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                String       @db.VarChar(255)
+  parentDepartmentId  String?      @map("parent_department_id") @db.Uuid
+  headEmployeeId      String?      @map("head_employee_id") @db.Uuid
+  status              String       @default("Active") @db.VarChar(20)
+  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz()
+
+  parent              Department?  @relation("DepartmentHierarchy", fields: [parentDepartmentId], references: [id])
+  children            Department[] @relation("DepartmentHierarchy")
+  headEmployee        Employee?    @relation("DepartmentHead", fields: [headEmployeeId], references: [id])
+  employees           Employee[]   @relation("EmployeeDepartment")
+  assets              Asset[]
+  bookings            ResourceBooking[]
+  auditCycles         AuditCycle[]
+
+  @@map("departments")
+}
+
+model Employee {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String    @db.VarChar(255)
+  email          String    @unique @db.VarChar(255)
+  passwordHash   String    @map("password_hash") @db.VarChar(255)
+  departmentId   String?   @map("department_id") @db.Uuid
+  role           String    @default("employee") @db.VarChar(20)
+  status         String    @default("Active") @db.VarChar(20)
+  passwordChangedAt DateTime? @map("password_changed_at") @db.Timestamptz()
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  department          Department?          @relation("EmployeeDepartment", fields: [departmentId], references: [id])
+  headOfDepartments   Department[]         @relation("DepartmentHead")
+  allocations         Allocation[]         @relation("AllocatedBy")
+  transferRequests    TransferRequest[]    @relation("RequestedBy")
+  transferApprovals   TransferRequest[]    @relation("ApprovedBy")
+  bookings            ResourceBooking[]
+  maintenanceRequests MaintenanceRequest[] @relation("RaisedBy")
+  maintenanceApprovals MaintenanceRequest[] @relation("ApprovedByMaintenance")
+  stateChanges        AssetStateLog[]
+  auditCyclesCreated  AuditCycle[]
+  auditAssignments    AuditCycleAuditor[]
+  auditItems          AuditItem[]
+  activityLogs        ActivityLog[]
+  notifications       Notification[]
+
+  @@map("employees")
+}
+
+model AssetCategory {
+  id          String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String @db.VarChar(255)
+  fieldSchema Json   @default("{}") @map("field_schema") @db.JsonB
+  status      String @default("Active") @db.VarChar(20)
+
+  assets Asset[]
+
+  @@map("asset_categories")
+}
+
+model Asset {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assetTag         String    @unique @map("asset_tag") @db.VarChar(20)
+  name             String    @db.VarChar(255)
+  categoryId       String    @map("category_id") @db.Uuid
+  serialNumber     String?   @unique @map("serial_number") @db.VarChar(255)
+  acquisitionDate  DateTime? @map("acquisition_date") @db.Date
+  acquisitionCost  Decimal?  @map("acquisition_cost") @db.Decimal(12, 2)
+  condition        String?   @db.VarChar(50)
+  location         String?   @db.VarChar(255)
+  departmentId     String?   @map("department_id") @db.Uuid
+  isBookable       Boolean   @default(false) @map("is_bookable")
+  status           String    @default("Available") @db.VarChar(20)
+  attributes       Json      @default("{}") @db.JsonB
+  photoUrl         String?   @map("photo_url") @db.Text
+  documentUrls     String[]  @map("document_urls")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  category          AssetCategory        @relation(fields: [categoryId], references: [id])
+  department        Department?          @relation(fields: [departmentId], references: [id])
+  allocations       Allocation[]
+  stateLog          AssetStateLog[]
+  bookings          ResourceBooking[]
+  maintenanceRequests MaintenanceRequest[]
+  auditItems        AuditItem[]
+
+  @@index([status], map: "idx_assets_status")
+  @@index([categoryId], map: "idx_assets_category")
+  @@map("assets")
+}
+
+model AssetStateLog {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assetId    String   @map("asset_id") @db.Uuid
+  fromStatus String?  @map("from_status") @db.VarChar(20)
+  toStatus   String   @map("to_status") @db.VarChar(20)
+  changedBy  String   @map("changed_by") @db.Uuid
+  changedAt  DateTime @default(now()) @map("changed_at") @db.Timestamptz()
+
+  asset    Asset    @relation(fields: [assetId], references: [id])
+  changer  Employee @relation(fields: [changedBy], references: [id])
+
+  @@map("asset_state_log")
+}
+
+model Allocation {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assetId            String    @map("asset_id") @db.Uuid
+  targetType         String    @map("target_type") @db.VarChar(20)
+  targetId           String    @map("target_id") @db.Uuid
+  allocatedBy        String    @map("allocated_by") @db.Uuid
+  expectedReturnDate DateTime? @map("expected_return_date") @db.Date
+  returnedAt         DateTime? @map("returned_at") @db.Timestamptz()
+  conditionNotes     String?   @map("condition_notes") @db.Text
+  status             String    @default("Active") @db.VarChar(20)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  asset              Asset             @relation(fields: [assetId], references: [id])
+  allocator          Employee          @relation("AllocatedBy", fields: [allocatedBy], references: [id])
+  transferRequests   TransferRequest[]
+
+  @@map("allocations")
+}
+
+model TransferRequest {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  allocationId  String    @map("allocation_id") @db.Uuid
+  requestedBy   String    @map("requested_by") @db.Uuid
+  newTargetType String    @map("new_target_type") @db.VarChar(20)
+  newTargetId   String    @map("new_target_id") @db.Uuid
+  status        String    @default("Requested") @db.VarChar(20)
+  approvedBy    String?   @map("approved_by") @db.Uuid
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  allocation  Allocation @relation(fields: [allocationId], references: [id])
+  requester   Employee   @relation("RequestedBy", fields: [requestedBy], references: [id])
+  approver    Employee?  @relation("ApprovedBy", fields: [approvedBy], references: [id])
+
+  @@map("transfer_requests")
+}
+
+model ResourceBooking {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  resourceId   String    @map("resource_id") @db.Uuid
+  bookedBy     String    @map("booked_by") @db.Uuid
+  departmentId String?   @map("department_id") @db.Uuid
+  startTime    DateTime  @map("start_time") @db.Timestamptz()
+  endTime      DateTime  @map("end_time") @db.Timestamptz()
+  status       String    @default("Upcoming") @db.VarChar(20)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  resource   Asset       @relation(fields: [resourceId], references: [id])
+  booker     Employee    @relation(fields: [bookedBy], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+
+  @@map("resource_bookings")
+}
+
+model MaintenanceRequest {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assetId    String    @map("asset_id") @db.Uuid
+  raisedBy   String    @map("raised_by") @db.Uuid
+  issue      String    @db.Text
+  priority   String    @db.VarChar(10)
+  photoUrl   String?   @map("photo_url") @db.Text
+  status     String    @default("Pending") @db.VarChar(20)
+  approvedBy String?   @map("approved_by") @db.Uuid
+  technician String?   @db.VarChar(255)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz()
+
+  asset    Asset    @relation(fields: [assetId], references: [id])
+  raiser   Employee @relation("RaisedBy", fields: [raisedBy], references: [id])
+  approver Employee? @relation("ApprovedByMaintenance", fields: [approvedBy], references: [id])
+
+  @@map("maintenance_requests")
+}
+
+model AuditCycle {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scopeDepartmentId String?   @map("scope_department_id") @db.Uuid
+  scopeLocation     String?   @map("scope_location") @db.VarChar(255)
+  startDate         DateTime  @map("start_date") @db.Date
+  endDate           DateTime  @map("end_date") @db.Date
+  status            String    @default("Open") @db.VarChar(20)
+  createdBy         String    @map("created_by") @db.Uuid
+  closedAt          DateTime? @map("closed_at") @db.Timestamptz()
+
+  scopeDepartment Department?         @relation(fields: [scopeDepartmentId], references: [id])
+  creator         Employee            @relation(fields: [createdBy], references: [id])
+  auditors        AuditCycleAuditor[]
+  items           AuditItem[]
+
+  @@map("audit_cycles")
+}
+
+model AuditCycleAuditor {
+  auditCycleId String @map("audit_cycle_id") @db.Uuid
+  auditorId    String @map("auditor_id") @db.Uuid
+
+  auditCycle AuditCycle @relation(fields: [auditCycleId], references: [id])
+  auditor    Employee   @relation(fields: [auditorId], references: [id])
+
+  @@id([auditCycleId, auditorId])
+  @@map("audit_cycle_auditors")
+}
+
+model AuditItem {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  auditCycleId String    @map("audit_cycle_id") @db.Uuid
+  assetId      String    @map("asset_id") @db.Uuid
+  result       String?   @db.VarChar(20)
+  resolution   String?   @db.VarChar(20)
+  markedBy     String?   @map("marked_by") @db.Uuid
+  markedAt     DateTime? @map("marked_at") @db.Timestamptz()
+
+  auditCycle AuditCycle @relation(fields: [auditCycleId], references: [id])
+  asset      Asset      @relation(fields: [assetId], references: [id])
+  marker     Employee?  @relation(fields: [markedBy], references: [id])
+
+  @@map("audit_items")
+}
+
+model ActivityLog {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorId    String   @map("actor_id") @db.Uuid
+  action     String   @db.VarChar(100)
+  targetType String?  @map("target_type") @db.VarChar(50)
+  targetId   String?  @map("target_id") @db.Uuid
+  metadata   Json?    @db.JsonB
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  actor Employee @relation(fields: [actorId], references: [id])
+
+  @@map("activity_log")
+}
+
+model Notification {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recipientId String   @map("recipient_id") @db.Uuid
+  type        String   @db.VarChar(50)
+  message     String   @db.Text
+  read        Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  recipient Employee @relation(fields: [recipientId], references: [id])
+
+  @@map("notifications")
+}
